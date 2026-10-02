@@ -1,0 +1,305 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0,user-scalable=no">
+<title>間違い探し</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:#1a1a2e;color:#fff;font-family:'Segoe UI',sans-serif;overflow:hidden;touch-action:manipulation}
+#game{display:flex;flex-direction:column;align-items:center;justify-content:center;height:100vh;width:100vw}
+#hud{display:flex;gap:30px;margin-bottom:10px;font-size:18px;font-weight:bold}
+#hud span{background:rgba(255,255,255,0.1);padding:6px 16px;border-radius:20px}
+#stage-label{color:#ffd700}
+#timer{color:#ff6b6b}
+#found-count{color:#51cf66}
+#canvas-wrap{display:flex;gap:4px;position:relative}
+canvas{border:2px solid #333;border-radius:8px;cursor:crosshair;image-rendering:pixelated}
+#overlay{position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.85);display:flex;flex-direction:column;align-items:center;justify-content:center;z-index:100}
+#overlay.hidden{display:none}
+#overlay h1{font-size:42px;margin-bottom:10px}
+#overlay h2{font-size:28px;color:#ffd700;margin-bottom:20px}
+#overlay p{font-size:18px;margin-bottom:30px;color:#aaa}
+.btn{background:linear-gradient(135deg,#667eea,#764ba2);color:#fff;border:none;padding:14px 40px;font-size:20px;border-radius:30px;cursor:pointer;transition:transform 0.2s}
+.btn:hover{transform:scale(1.05)}
+.btn:active{transform:scale(0.95)}
+#miss-flash{position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(255,0,0,0.3);pointer-events:none;opacity:0;z-index:50;transition:opacity 0.3s}
+#label-left,#label-right{position:absolute;top:-28px;font-size:14px;color:#aaa;font-weight:bold}
+#label-left{left:10px}
+#label-right{right:10px}
+</style>
+</head>
+<body>
+<div id="game">
+  <div id="hud">
+    <span id="stage-label">Stage 1/5</span>
+    <span id="timer">⏱ 60s</span>
+    <span id="found-count">⭐ 0/5</span>
+  </div>
+  <div id="canvas-wrap">
+    <span id="label-left">◀ 原画</span>
+    <span id="label-right">間違いあり ▶</span>
+    <canvas id="c1"></canvas>
+    <canvas id="c2"></canvas>
+  </div>
+</div>
+<div id="overlay">
+  <h1>🔍 間違い探し</h1>
+  <h2>間違いを見つけよう！</h2>
+  <p>右の絵の違うところをタップしてね！制限時間以内に5つ全部見つけよう✨</p>
+  <button class="btn" onclick="startGame()">START</button>
+</div>
+<div id="miss-flash"></div>
+<script>
+const c1=document.getElementById('c1'),c2=document.getElementById('c2');
+const ctx1=c1.getContext('2d'),ctx2=c2.getContext('2d');
+const overlay=document.getElementById('overlay');
+const stageLabel=document.getElementById('stage-label');
+const timerEl=document.getElementById('timer');
+const foundEl=document.getElementById('found-count');
+const missFlash=document.getElementById('miss-flash');
+
+let W,H,stage=1,maxStage=5,totalDiffs=5,foundDiffs=0,diffs=[],timer=60,timerID=null,playing=false;
+
+function resize(){
+  const maxW=Math.floor((window.innerWidth-20)/2);
+  const maxH=window.innerHeight-80;
+  const s=Math.min(maxW,maxH,400);
+  W=s;H=s;
+  c1.width=c2.width=W;c1.height=c2.height=H;
+}
+window.addEventListener('resize',()=>{if(!playing)resize();});
+resize();
+
+// Shape & color generators
+const COLORS=['#ff6b6b','#51cf66','#339af0','#ffd43b','#cc5de8','#ff922b','#20c997','#f06595','#748ffc','#e8590c'];
+const SHAPES=['circle','rect','triangle','star','diamond','heart'];
+
+function rng(a,b){return Math.floor(Math.random()*(b-a+1))+a;}
+function rngF(a,b){return Math.random()*(b-a)+a;}
+function pick(arr){return arr[rng(0,arr.length-1)];}
+
+function drawShape(ctx,type,x,y,sz,color,rotation){
+  ctx.save();
+  ctx.translate(x,y);
+  ctx.rotate(rotation||0);
+  ctx.fillStyle=color;
+  ctx.beginPath();
+  if(type==='circle'){
+    ctx.arc(0,0,sz,0,Math.PI*2);
+  }else if(type==='rect'){
+    ctx.rect(-sz,-sz,sz*2,sz*1.6);
+  }else if(type==='triangle'){
+    ctx.moveTo(0,-sz);ctx.lineTo(sz,sz);ctx.lineTo(-sz,sz);ctx.closePath();
+  }else if(type==='star'){
+    for(let i=0;i<5;i++){
+      const a1=Math.PI/2+i*Math.PI*2/5;
+      const a2=a1+Math.PI/5;
+      ctx.lineTo(Math.cos(a1)*sz, -Math.sin(a1)*sz);
+      ctx.lineTo(Math.cos(a2)*sz*0.4, -Math.sin(a2)*sz*0.4);
+    }
+    ctx.closePath();
+  }else if(type==='diamond'){
+    ctx.moveTo(0,-sz);ctx.lineTo(sz*0.6,0);ctx.lineTo(0,sz);ctx.lineTo(-sz*0.6,0);ctx.closePath();
+  }else if(type==='heart'){
+    const s=sz*0.6;
+    ctx.moveTo(0,s);
+    ctx.bezierCurveTo(-s*2,-s*0.5,-s*0.5,-s*2,0,-s*0.8);
+    ctx.bezierCurveTo(s*0.5,-s*2,s*2,-s*0.5,0,s);
+  }
+  ctx.fill();
+  ctx.restore();
+}
+
+function generateScene(){
+  // Background
+  const bgColors=['#16213e','#1a1a2e','#0f3460','#1b262c','#2d132c'];
+  const bg=pick(bgColors);
+  ctx1.fillStyle=bg;ctx1.fillRect(0,0,W,H);
+  // Ground
+  const groundH=rng(40,80);
+  const groundColor=pick(['#2d5016','#1a3a0a','#3d2b1f','#4a3728']);
+  ctx1.fillStyle=groundColor;ctx1.fillRect(0,H-groundH,W,groundH);
+  // Decorative elements (clouds, moon, etc.)
+  const moonX=rng(50,W-50),moonY=rng(30,100);
+  ctx1.fillStyle='#ffd43b';ctx1.beginPath();ctx1.arc(moonX,moonY,rng(15,25),0,Math.PI*2);ctx1.fill();
+  // Stars in sky
+  ctx1.fillStyle='#fff';
+  for(let i=0;i<rng(10,25);i++){
+    const sx=rng(5,W-5),sy=rng(5,H-groundH-10),ss=rngF(1,3);
+    ctx1.beginPath();ctx1.arc(sx,sy,ss,0,Math.PI*2);ctx1.fill();
+  }
+  // Main shapes (8-15)
+  const numShapes=rng(8+stage,15+stage);
+  const shapes=[];
+  const margin=40;
+  for(let i=0;i<numShapes;i++){
+    let attempts=0,x,y,sz,ok;
+    do{
+      sz=rng(15,35);
+      x=rng(margin,W-margin);
+      y=rng(margin,H-margin);
+      ok=true;
+      for(const s of shapes){
+        if(Math.abs(s.x-x)<s.sz+sz+10&&Math.abs(s.y-y)<s.sz+sz+10){ok=false;break;}
+      }
+      attempts++;
+    }while(!ok&&attempts<50);
+    const shape={type:pick(SHAPES),x,y,sz,color:pick(COLORS),rotation:rngF(0,Math.PI*2)};
+    shapes.push(shape);
+    drawShape(ctx1,shape.type,shape.x,shape.y,shape.sz,shape.color,shape.rotation);
+  }
+  // Copy to c2
+  ctx2.drawImage(c1,0,0);
+  // Create differences on c2
+  diffs=[];
+  const diffTypes=['color','missing','move','size','shape'];
+  const usedIndices=new Set();
+  for(let d=0;d<totalDiffs;d++){
+    let idx;
+    do{idx=rng(0,shapes.length-1);}while(usedIndices.has(idx));
+    usedIndices.add(idx);
+    const s=shapes[idx];
+    const diffType=pick(diffTypes);
+    // Clear original shape area on c2
+    ctx2.save();
+    ctx2.fillStyle=bg;
+    // Overdraw the area
+    ctx2.beginPath();ctx2.arc(s.x,s.y,s.sz+5,0,Math.PI*2);ctx2.fill();
+    // Check if in ground area
+    if(s.y+s.sz>=H-groundH){
+      ctx2.fillStyle=groundColor;
+      ctx2.fillRect(s.x-s.sz-5,H-groundH,s.sz*2+10,groundH);
+    }
+    ctx2.restore();
+    let diffInfo={x:s.x,y:s.y,radius:s.sz+15,found:false,type:diffType};
+    if(diffType==='color'){
+      let newColor;do{newColor=pick(COLORS);}while(newColor===s.color);
+      drawShape(ctx2,s.type,s.x,s.y,s.sz,newColor,s.rotation);
+    }else if(diffType==='missing'){
+      // Already cleared, don't redraw
+    }else if(diffType==='move'){
+      const nx=s.x+rng(-20,20),ny=s.y+rng(-20,20);
+      drawShape(ctx2,s.type,nx,ny,s.sz,s.color,s.rotation);
+      diffInfo.x=(s.x+nx)/2;diffInfo.y=(s.y+ny)/2;diffInfo.radius=s.sz+25;
+    }else if(diffType==='size'){
+      const newSz=s.sz*(Math.random()>0.5?1.5:0.6);
+      drawShape(ctx2,s.type,s.x,s.y,newSz,s.color,s.rotation);
+      diffInfo.radius=Math.max(s.sz,newSz)+15;
+    }else if(diffType==='shape'){
+      let newType;do{newType=pick(SHAPES);}while(newType===s.type);
+      drawShape(ctx2,newType,s.x,s.y,s.sz,s.color,s.rotation);
+    }
+    diffs.push(diffInfo);
+  }
+}
+
+function checkClick(e){
+  if(!playing)return;
+  const rect=c2.getBoundingClientRect();
+  const scaleX=W/rect.width,scaleY=H/rect.height;
+  let cx,cy;
+  if(e.touches){
+    cx=(e.touches[0].clientX-rect.left)*scaleX;
+    cy=(e.touches[0].clientY-rect.top)*scaleY;
+    e.preventDefault();
+  }else{
+    cx=(e.clientX-rect.left)*scaleX;
+    cy=(e.clientY-rect.top)*scaleY;
+  }
+  let hit=false;
+  for(const d of diffs){
+    if(d.found)continue;
+    const dist=Math.sqrt((cx-d.x)**2+(cy-d.y)**2);
+    if(dist<=d.radius){
+      d.found=true;
+      foundDiffs++;
+      hit=true;
+      // Draw circle highlight on both canvases
+      [ctx1,ctx2].forEach(ctx=>{
+        ctx.save();
+        ctx.strokeStyle='#ffd700';ctx.lineWidth=3;
+        ctx.setLineDash([6,4]);
+        ctx.beginPath();ctx.arc(d.x,d.y,d.radius,0,Math.PI*2);ctx.stroke();
+        ctx.fillStyle='rgba(255,215,0,0.15)';
+        ctx.beginPath();ctx.arc(d.x,d.y,d.radius,0,Math.PI*2);ctx.fill();
+        // Checkmark
+        ctx.fillStyle='#ffd700';ctx.font='bold 20px sans-serif';ctx.textAlign='center';
+        ctx.fillText('\u2714',d.x,d.y+7);
+        ctx.restore();
+      });
+      foundEl.textContent='\u2b50 '+foundDiffs+'/'+totalDiffs;
+      if(foundDiffs>=totalDiffs) stageComplete();
+      break;
+    }
+  }
+  if(!hit){
+    missFlash.style.opacity='1';
+    setTimeout(()=>missFlash.style.opacity='0',200);
+    timer=Math.max(0,timer-3);
+  }
+}
+
+c2.addEventListener('click',checkClick);
+c2.addEventListener('touchstart',checkClick,{passive:false});
+
+function stageComplete(){
+  playing=false;
+  clearInterval(timerID);
+  if(stage>=maxStage){
+    showOverlay('\ud83c\udf89 \u5168\u30b9\u30c6\u30fc\u30b8\u30af\u30ea\u30a2\uff01','\u304a\u3081\u3067\u3068\u3046\uff01\u2728','\u6b8b\u308a\u6642\u9593: '+timer+'\u79d2','\u6700\u521d\u304b\u3089');
+  }else{
+    showOverlay('\u2b50 Stage '+stage+' \u30af\u30ea\u30a2\uff01','\u6b21\u306e\u30b9\u30c6\u30fc\u30b8\u3078\uff01','\u6b8b\u308a\u6642\u9593: '+timer+'\u79d2','\u6b21\u3078');
+  }
+}
+
+function timeUp(){
+  playing=false;
+  clearInterval(timerID);
+  // Show remaining diffs
+  for(const d of diffs){
+    if(!d.found){
+      [ctx1,ctx2].forEach(ctx=>{
+        ctx.save();
+        ctx.strokeStyle='#ff6b6b';ctx.lineWidth=3;
+        ctx.setLineDash([6,4]);
+        ctx.beginPath();ctx.arc(d.x,d.y,d.radius,0,Math.PI*2);ctx.stroke();
+        ctx.fillStyle='rgba(255,0,0,0.15)';
+        ctx.beginPath();ctx.arc(d.x,d.y,d.radius,0,Math.PI*2);ctx.fill();
+        ctx.fillStyle='#ff6b6b';ctx.font='bold 20px sans-serif';ctx.textAlign='center';
+        ctx.fillText('\u2716',d.x,d.y+7);
+        ctx.restore();
+      });
+    }
+  }
+  showOverlay('\u23f0 \u6642\u9593\u5207\u308c\uff01','\u898b\u3064\u3051\u305f\u6570: '+foundDiffs+'/'+totalDiffs,'\u3082\u3046\u4e00\u5ea6\u6311\u6226\u3057\u3088\u3046\uff01','\u30ea\u30c8\u30e9\u30a4');
+  stage=1;
+}
+
+function showOverlay(title,subtitle,desc,btnText){
+  overlay.classList.remove('hidden');
+  overlay.innerHTML='<h1>'+title+'</h1><h2>'+subtitle+'</h2><p>'+desc+'</p><button class="btn" onclick="'+(btnText==='\u6700\u521d\u304b\u3089'||btnText==='\u30ea\u30c8\u30e9\u30a4'?'stage=1;startGame()':'stage++;startGame()')+'">'+(btnText)+'</button>';
+}
+
+function startGame(){
+  resize();
+  overlay.classList.add('hidden');
+  foundDiffs=0;
+  timer=Math.max(30,65-stage*5);
+  playing=true;
+  stageLabel.textContent='Stage '+stage+'/'+maxStage;
+  foundEl.textContent='\u2b50 0/'+totalDiffs;
+  timerEl.textContent='\u23f1 '+timer+'s';
+  generateScene();
+  clearInterval(timerID);
+  timerID=setInterval(()=>{
+    timer--;
+    timerEl.textContent='\u23f1 '+timer+'s';
+    if(timer<=10)timerEl.style.color='#ff0000';
+    else timerEl.style.color='#ff6b6b';
+    if(timer<=0)timeUp();
+  },1000);
+}
+</script>
+</body>
+</html>
