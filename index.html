@@ -8,31 +8,48 @@
 *{margin:0;padding:0;box-sizing:border-box}
 body{background:#1a1a2e;color:#fff;font-family:'Segoe UI',sans-serif;overflow:hidden;touch-action:manipulation}
 #game{display:flex;flex-direction:column;align-items:center;justify-content:center;height:100vh;width:100vw}
-#hud{display:flex;gap:30px;margin-bottom:10px;font-size:18px;font-weight:bold}
-#hud span{background:rgba(255,255,255,0.1);padding:6px 16px;border-radius:20px}
+#hud{display:flex;gap:16px;margin-bottom:10px;font-size:16px;font-weight:bold;flex-wrap:wrap;justify-content:center}
+#hud span{background:rgba(255,255,255,0.1);padding:5px 14px;border-radius:20px}
 #stage-label{color:#ffd700}
 #timer{color:#ff6b6b}
 #found-count{color:#51cf66}
+#score-label{color:#ffd700}
 #canvas-wrap{display:flex;gap:4px;position:relative}
 canvas{border:2px solid #333;border-radius:8px;cursor:crosshair;image-rendering:pixelated}
-#overlay{position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.85);display:flex;flex-direction:column;align-items:center;justify-content:center;z-index:100}
+#overlay{position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.88);display:flex;flex-direction:column;align-items:center;justify-content:center;z-index:100;overflow-y:auto;padding:20px}
 #overlay.hidden{display:none}
-#overlay h1{font-size:42px;margin-bottom:10px}
-#overlay h2{font-size:28px;color:#ffd700;margin-bottom:20px}
-#overlay p{font-size:18px;margin-bottom:30px;color:#aaa}
-.btn{background:linear-gradient(135deg,#667eea,#764ba2);color:#fff;border:none;padding:14px 40px;font-size:20px;border-radius:30px;cursor:pointer;transition:transform 0.2s}
+#overlay h1{font-size:38px;margin-bottom:6px}
+#overlay h2{font-size:24px;color:#ffd700;margin-bottom:12px}
+#overlay p{font-size:16px;margin-bottom:16px;color:#ccc;text-align:center;line-height:1.7;max-width:420px}
+.btn{background:linear-gradient(135deg,#667eea,#764ba2);color:#fff;border:none;padding:14px 40px;font-size:20px;border-radius:30px;cursor:pointer;transition:transform 0.2s;margin:5px}
 .btn:hover{transform:scale(1.05)}
 .btn:active{transform:scale(0.95)}
+.btn-secondary{background:linear-gradient(135deg,#20c997,#339af0)}
 #miss-flash{position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(255,0,0,0.3);pointer-events:none;opacity:0;z-index:50;transition:opacity 0.3s}
 #label-left,#label-right{position:absolute;top:-28px;font-size:14px;color:#aaa;font-weight:bold}
 #label-left{left:10px}
 #label-right{right:10px}
+.rank{font-size:64px;margin:10px 0}
+.stat-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px 20px;text-align:center;margin:10px 0}
+.stat-grid .label{color:#aaa;font-size:13px}
+.stat-grid .value{color:#fff;font-size:22px;font-weight:bold}
+.stat-grid .value.gold{color:#ffd700}
+.stat-grid .value.green{color:#51cf66}
+.stat-grid .value.red{color:#ff6b6b}
+.stat-grid .value.blue{color:#339af0}
+.stage-scores{display:flex;gap:8px;justify-content:center;flex-wrap:wrap;margin:8px 0}
+.stage-chip{background:rgba(255,255,255,0.1);padding:4px 10px;border-radius:12px;font-size:13px}
+.stage-chip .num{color:#ffd700;font-weight:bold}
+.new-record{color:#ffd700;font-size:18px;font-weight:bold;animation:pulse 1s infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:0.5}}
+.combo-flash{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);font-size:36px;font-weight:bold;color:#51cf66;pointer-events:none;opacity:0;z-index:55;transition:opacity 0.4s}
 </style>
 </head>
 <body>
 <div id="game">
   <div id="hud">
     <span id="stage-label">Stage 1/5</span>
+    <span id="score-label">🏆 0</span>
     <span id="timer">⏱ 60s</span>
     <span id="found-count">⭐ 0/5</span>
   </div>
@@ -46,10 +63,11 @@ canvas{border:2px solid #333;border-radius:8px;cursor:crosshair;image-rendering:
 <div id="overlay">
   <h1>🔍 間違い探し</h1>
   <h2>間違いを見つけよう！</h2>
-  <p>右の絵の違うところをタップしてね！制限時間以内に5つ全部見つけよう✨</p>
+  <p>左右の絵を見比べて、違うところをタップしてね！<br>制限時間以内に5つ全部見つけよう✨<br>ミスタップすると<b style="color:#ff6b6b">-3秒</b>ペナルティ！</p>
   <button class="btn" onclick="startGame()">START</button>
 </div>
 <div id="miss-flash"></div>
+<div class="combo-flash" id="combo-flash"></div>
 <script>
 const c1=document.getElementById('c1'),c2=document.getElementById('c2');
 const ctx1=c1.getContext('2d'),ctx2=c2.getContext('2d');
@@ -57,9 +75,12 @@ const overlay=document.getElementById('overlay');
 const stageLabel=document.getElementById('stage-label');
 const timerEl=document.getElementById('timer');
 const foundEl=document.getElementById('found-count');
+const scoreLabelEl=document.getElementById('score-label');
 const missFlash=document.getElementById('miss-flash');
+const comboFlash=document.getElementById('combo-flash');
 
 let W,H,stage=1,maxStage=5,totalDiffs=5,foundDiffs=0,diffs=[],timer=60,timerID=null,playing=false;
+let totalScore=0,stageScores=[],missCount=0,totalMisses=0,stageStartTime=0,combo=0;
 
 function resize(){
   const maxW=Math.floor((window.innerWidth-20)/2);
@@ -71,7 +92,6 @@ function resize(){
 window.addEventListener('resize',()=>{if(!playing)resize();});
 resize();
 
-// Shape & color generators
 const COLORS=['#ff6b6b','#51cf66','#339af0','#ffd43b','#cc5de8','#ff922b','#20c997','#f06595','#748ffc','#e8590c'];
 const SHAPES=['circle','rect','triangle','star','diamond','heart'];
 
@@ -112,24 +132,19 @@ function drawShape(ctx,type,x,y,sz,color,rotation){
 }
 
 function generateScene(){
-  // Background
   const bgColors=['#16213e','#1a1a2e','#0f3460','#1b262c','#2d132c'];
   const bg=pick(bgColors);
   ctx1.fillStyle=bg;ctx1.fillRect(0,0,W,H);
-  // Ground
   const groundH=rng(40,80);
   const groundColor=pick(['#2d5016','#1a3a0a','#3d2b1f','#4a3728']);
   ctx1.fillStyle=groundColor;ctx1.fillRect(0,H-groundH,W,groundH);
-  // Decorative elements (clouds, moon, etc.)
   const moonX=rng(50,W-50),moonY=rng(30,100);
   ctx1.fillStyle='#ffd43b';ctx1.beginPath();ctx1.arc(moonX,moonY,rng(15,25),0,Math.PI*2);ctx1.fill();
-  // Stars in sky
   ctx1.fillStyle='#fff';
   for(let i=0;i<rng(10,25);i++){
     const sx=rng(5,W-5),sy=rng(5,H-groundH-10),ss=rngF(1,3);
     ctx1.beginPath();ctx1.arc(sx,sy,ss,0,Math.PI*2);ctx1.fill();
   }
-  // Main shapes (8-15)
   const numShapes=rng(8+stage,15+stage);
   const shapes=[];
   const margin=40;
@@ -149,9 +164,7 @@ function generateScene(){
     shapes.push(shape);
     drawShape(ctx1,shape.type,shape.x,shape.y,shape.sz,shape.color,shape.rotation);
   }
-  // Copy to c2
   ctx2.drawImage(c1,0,0);
-  // Create differences on c2
   diffs=[];
   const diffTypes=['color','missing','move','size','shape'];
   const usedIndices=new Set();
@@ -161,12 +174,9 @@ function generateScene(){
     usedIndices.add(idx);
     const s=shapes[idx];
     const diffType=pick(diffTypes);
-    // Clear original shape area on c2
     ctx2.save();
     ctx2.fillStyle=bg;
-    // Overdraw the area
     ctx2.beginPath();ctx2.arc(s.x,s.y,s.sz+5,0,Math.PI*2);ctx2.fill();
-    // Check if in ground area
     if(s.y+s.sz>=H-groundH){
       ctx2.fillStyle=groundColor;
       ctx2.fillRect(s.x-s.sz-5,H-groundH,s.sz*2+10,groundH);
@@ -177,7 +187,7 @@ function generateScene(){
       let newColor;do{newColor=pick(COLORS);}while(newColor===s.color);
       drawShape(ctx2,s.type,s.x,s.y,s.sz,newColor,s.rotation);
     }else if(diffType==='missing'){
-      // Already cleared, don't redraw
+      // Already cleared
     }else if(diffType==='move'){
       const nx=s.x+rng(-20,20),ny=s.y+rng(-20,20);
       drawShape(ctx2,s.type,nx,ny,s.sz,s.color,s.rotation);
@@ -192,6 +202,25 @@ function generateScene(){
     }
     diffs.push(diffInfo);
   }
+}
+
+function calcStageScore(){
+  // Base: 200 per found diff
+  // Speed bonus: remaining time * 10
+  // Combo bonus: consecutive finds * 50
+  // Penalty: -50 per miss
+  const found=foundDiffs;
+  const base=found*200;
+  const speedBonus=timer*10;
+  const missPenalty=missCount*50;
+  const comboBonus=combo*50;
+  return Math.max(0, base + speedBonus + comboBonus - missPenalty);
+}
+
+function showComboFlash(text){
+  comboFlash.textContent=text;
+  comboFlash.style.opacity='1';
+  setTimeout(()=>comboFlash.style.opacity='0',600);
 }
 
 function checkClick(e){
@@ -214,7 +243,15 @@ function checkClick(e){
     if(dist<=d.radius){
       d.found=true;
       foundDiffs++;
+      combo++;
       hit=true;
+      // Points popup
+      const pts=200+(combo>1?combo*50:0);
+      if(combo>=3) showComboFlash('🔥 '+combo+'連続! +'+pts+'pt');
+      else showComboFlash('+'+pts+'pt');
+      // Update score display
+      const currentStageScore=calcStageScore();
+      scoreLabelEl.textContent='🏆 '+(totalScore+currentStageScore);
       // Draw circle highlight on both canvases
       [ctx1,ctx2].forEach(ctx=>{
         ctx.save();
@@ -223,12 +260,11 @@ function checkClick(e){
         ctx.beginPath();ctx.arc(d.x,d.y,d.radius,0,Math.PI*2);ctx.stroke();
         ctx.fillStyle='rgba(255,215,0,0.15)';
         ctx.beginPath();ctx.arc(d.x,d.y,d.radius,0,Math.PI*2);ctx.fill();
-        // Checkmark
         ctx.fillStyle='#ffd700';ctx.font='bold 20px sans-serif';ctx.textAlign='center';
-        ctx.fillText('\u2714',d.x,d.y+7);
+        ctx.fillText('✔',d.x,d.y+7);
         ctx.restore();
       });
-      foundEl.textContent='\u2b50 '+foundDiffs+'/'+totalDiffs;
+      foundEl.textContent='⭐ '+foundDiffs+'/'+totalDiffs;
       if(foundDiffs>=totalDiffs) stageComplete();
       break;
     }
@@ -237,25 +273,148 @@ function checkClick(e){
     missFlash.style.opacity='1';
     setTimeout(()=>missFlash.style.opacity='0',200);
     timer=Math.max(0,timer-3);
+    missCount++;
+    totalMisses++;
+    combo=0;
+    // Update score display
+    const currentStageScore=calcStageScore();
+    scoreLabelEl.textContent='🏆 '+(totalScore+currentStageScore);
   }
 }
 
 c2.addEventListener('click',checkClick);
 c2.addEventListener('touchstart',checkClick,{passive:false});
+// Also allow clicking on c1 (original)
+c1.addEventListener('click',function(e){
+  if(!playing)return;
+  const rect=c1.getBoundingClientRect();
+  const scaleX=W/rect.width,scaleY=H/rect.height;
+  let cx,cy;
+  if(e.touches){
+    cx=(e.touches[0].clientX-rect.left)*scaleX;
+    cy=(e.touches[0].clientY-rect.top)*scaleY;
+    e.preventDefault();
+  }else{
+    cx=(e.clientX-rect.left)*scaleX;
+    cy=(e.clientY-rect.top)*scaleY;
+  }
+  let hit=false;
+  for(const d of diffs){
+    if(d.found)continue;
+    const dist=Math.sqrt((cx-d.x)**2+(cy-d.y)**2);
+    if(dist<=d.radius){
+      d.found=true;
+      foundDiffs++;
+      combo++;
+      hit=true;
+      const pts=200+(combo>1?combo*50:0);
+      if(combo>=3) showComboFlash('🔥 '+combo+'連続! +'+pts+'pt');
+      else showComboFlash('+'+pts+'pt');
+      const currentStageScore=calcStageScore();
+      scoreLabelEl.textContent='🏆 '+(totalScore+currentStageScore);
+      [ctx1,ctx2].forEach(ctx=>{
+        ctx.save();
+        ctx.strokeStyle='#ffd700';ctx.lineWidth=3;
+        ctx.setLineDash([6,4]);
+        ctx.beginPath();ctx.arc(d.x,d.y,d.radius,0,Math.PI*2);ctx.stroke();
+        ctx.fillStyle='rgba(255,215,0,0.15)';
+        ctx.beginPath();ctx.arc(d.x,d.y,d.radius,0,Math.PI*2);ctx.fill();
+        ctx.fillStyle='#ffd700';ctx.font='bold 20px sans-serif';ctx.textAlign='center';
+        ctx.fillText('✔',d.x,d.y+7);
+        ctx.restore();
+      });
+      foundEl.textContent='⭐ '+foundDiffs+'/'+totalDiffs;
+      if(foundDiffs>=totalDiffs) stageComplete();
+      break;
+    }
+  }
+  if(!hit){
+    missFlash.style.opacity='1';
+    setTimeout(()=>missFlash.style.opacity='0',200);
+    timer=Math.max(0,timer-3);
+    missCount++;
+    totalMisses++;
+    combo=0;
+    const currentStageScore=calcStageScore();
+    scoreLabelEl.textContent='🏆 '+(totalScore+currentStageScore);
+  }
+});
+c1.addEventListener('touchstart',function(e){
+  c1.dispatchEvent(new MouseEvent('click',{clientX:e.touches[0].clientX,clientY:e.touches[0].clientY}));
+  e.preventDefault();
+},{passive:false});
+
+function getRank(score){
+  if(score>=8000) return {rank:'S',emoji:'👑',color:'#ffd700'};
+  if(score>=6000) return {rank:'A',emoji:'🌟',color:'#ff922b'};
+  if(score>=4000) return {rank:'B',emoji:'⭐',color:'#339af0'};
+  if(score>=2000) return {rank:'C',emoji:'✨',color:'#51cf66'};
+  return {rank:'D',emoji:'💪',color:'#aaa'};
+}
 
 function stageComplete(){
   playing=false;
   clearInterval(timerID);
+  const stageScore=calcStageScore();
+  stageScores.push(stageScore);
+  totalScore+=stageScore;
+
   if(stage>=maxStage){
-    showOverlay('\ud83c\udf89 \u5168\u30b9\u30c6\u30fc\u30b8\u30af\u30ea\u30a2\uff01','\u304a\u3081\u3067\u3068\u3046\uff01\u2728','\u6b8b\u308a\u6642\u9593: '+timer+'\u79d2','\u6700\u521d\u304b\u3089');
+    showGameClear();
   }else{
-    showOverlay('\u2b50 Stage '+stage+' \u30af\u30ea\u30a2\uff01','\u6b21\u306e\u30b9\u30c6\u30fc\u30b8\u3078\uff01','\u6b8b\u308a\u6642\u9593: '+timer+'\u79d2','\u6b21\u3078');
+    // Stage clear screen
+    const elapsed=Math.round((Date.now()-stageStartTime)/1000);
+    overlay.classList.remove('hidden');
+    overlay.innerHTML=`
+      <h1>⭐ Stage ${stage} クリア！</h1>
+      <h2>ステージスコア: ${stageScore.toLocaleString()}</h2>
+      <div class="stat-grid">
+        <div><div class="label">見つけた数</div><div class="value green">${foundDiffs}/${totalDiffs}</div></div>
+        <div><div class="label">残り時間</div><div class="value blue">${timer}秒</div></div>
+        <div><div class="label">ミスタップ</div><div class="value red">${missCount}回</div></div>
+        <div><div class="label">合計スコア</div><div class="value gold">${totalScore.toLocaleString()}</div></div>
+      </div>
+      <button class="btn" onclick="stage++;startGame()">次のステージへ ▶</button>`;
   }
+}
+
+function showGameClear(){
+  const r=getRank(totalScore);
+  const highKey='machigai_highscore';
+  const prevHigh=parseInt(localStorage.getItem(highKey)||'0');
+  const isRecord=totalScore>prevHigh;
+  if(isRecord) localStorage.setItem(highKey,totalScore);
+  const highScore=Math.max(prevHigh,totalScore);
+  const totalFound=stageScores.length*totalDiffs;
+  const accuracy=Math.round((totalFound/(totalFound+totalMisses))*100)||0;
+
+  overlay.classList.remove('hidden');
+  overlay.innerHTML=`
+    <h1>🎉 全ステージクリア！</h1>
+    <div class="rank" style="color:${r.color}">${r.emoji} ${r.rank}ランク</div>
+    <div class="stat-grid">
+      <div><div class="label">合計スコア</div><div class="value gold">${totalScore.toLocaleString()}</div></div>
+      <div><div class="label">最高記録</div><div class="value">${highScore.toLocaleString()}</div></div>
+      <div><div class="label">正確率</div><div class="value green">${accuracy}%</div></div>
+      <div><div class="label">ミスタップ</div><div class="value red">${totalMisses}回</div></div>
+    </div>
+    <p style="font-size:14px;color:#aaa;margin:4px 0">ステージ別スコア</p>
+    <div class="stage-scores">
+      ${stageScores.map((s,i)=>`<span class="stage-chip">Stage${i+1}: <span class="num">${s.toLocaleString()}</span></span>`).join('')}
+    </div>
+    ${isRecord?'<div class="new-record">🆕 NEW RECORD!</div>':''}
+    <div style="display:flex;gap:10px;flex-wrap:wrap;justify-content:center">
+      <button class="btn" onclick="resetAndStart()">もう一回</button>
+      <button class="btn btn-secondary" onclick="showTitle()">タイトルへ</button>
+    </div>`;
 }
 
 function timeUp(){
   playing=false;
   clearInterval(timerID);
+  const stageScore=calcStageScore();
+  stageScores.push(stageScore);
+  totalScore+=stageScore;
   // Show remaining diffs
   for(const d of diffs){
     if(!d.found){
@@ -267,36 +426,82 @@ function timeUp(){
         ctx.fillStyle='rgba(255,0,0,0.15)';
         ctx.beginPath();ctx.arc(d.x,d.y,d.radius,0,Math.PI*2);ctx.fill();
         ctx.fillStyle='#ff6b6b';ctx.font='bold 20px sans-serif';ctx.textAlign='center';
-        ctx.fillText('\u2716',d.x,d.y+7);
+        ctx.fillText('✖',d.x,d.y+7);
         ctx.restore();
       });
     }
   }
-  showOverlay('\u23f0 \u6642\u9593\u5207\u308c\uff01','\u898b\u3064\u3051\u305f\u6570: '+foundDiffs+'/'+totalDiffs,'\u3082\u3046\u4e00\u5ea6\u6311\u6226\u3057\u3088\u3046\uff01','\u30ea\u30c8\u30e9\u30a4');
-  stage=1;
+  // Game Over screen
+  const r=getRank(totalScore);
+  const highKey='machigai_highscore';
+  const prevHigh=parseInt(localStorage.getItem(highKey)||'0');
+  const isRecord=totalScore>prevHigh;
+  if(isRecord) localStorage.setItem(highKey,totalScore);
+  const highScore=Math.max(prevHigh,totalScore);
+  const totalFound=stageScores.reduce((a,_,i)=>a+(i<stageScores.length-1?totalDiffs:foundDiffs),0);
+
+  overlay.classList.remove('hidden');
+  overlay.innerHTML=`
+    <h1>⏰ GAME OVER</h1>
+    <h2>Stage ${stage} で時間切れ！</h2>
+    <div class="rank" style="color:${r.color}">${r.emoji} ${r.rank}ランク</div>
+    <div class="stat-grid">
+      <div><div class="label">合計スコア</div><div class="value gold">${totalScore.toLocaleString()}</div></div>
+      <div><div class="label">最高記録</div><div class="value">${highScore.toLocaleString()}</div></div>
+      <div><div class="label">見つけた数</div><div class="value green">${foundDiffs}/${totalDiffs}</div></div>
+      <div><div class="label">ミスタップ</div><div class="value red">${totalMisses}回</div></div>
+    </div>
+    ${stageScores.length>0?`
+    <p style="font-size:14px;color:#aaa;margin:4px 0">ステージ別スコア</p>
+    <div class="stage-scores">
+      ${stageScores.map((s,i)=>`<span class="stage-chip">Stage${i+1}: <span class="num">${s.toLocaleString()}</span></span>`).join('')}
+    </div>`:''}
+    ${isRecord?'<div class="new-record">🆕 NEW RECORD!</div>':''}
+    <div style="display:flex;gap:10px;flex-wrap:wrap;justify-content:center">
+      <button class="btn" onclick="resetAndStart()">もう一回</button>
+      <button class="btn btn-secondary" onclick="showTitle()">タイトルへ</button>
+    </div>`;
 }
 
-function showOverlay(title,subtitle,desc,btnText){
+function resetAndStart(){
+  stage=1;totalScore=0;stageScores=[];totalMisses=0;
+  startGame();
+}
+
+function showTitle(){
+  stage=1;totalScore=0;stageScores=[];totalMisses=0;
   overlay.classList.remove('hidden');
-  overlay.innerHTML='<h1>'+title+'</h1><h2>'+subtitle+'</h2><p>'+desc+'</p><button class="btn" onclick="'+(btnText==='\u6700\u521d\u304b\u3089'||btnText==='\u30ea\u30c8\u30e9\u30a4'?'stage=1;startGame()':'stage++;startGame()')+'">'+(btnText)+'</button>';
+  overlay.innerHTML=`
+    <h1>🔍 間違い探し</h1>
+    <h2>間違いを見つけよう！</h2>
+    <p>左右の絵を見比べて、違うところをタップしてね！<br>制限時間以内に5つ全部見つけよう✨<br>ミスタップすると<b style="color:#ff6b6b">-3秒</b>ペナルティ！</p>
+    <button class="btn" onclick="startGame()">START</button>`;
 }
 
 function startGame(){
   resize();
   overlay.classList.add('hidden');
   foundDiffs=0;
+  missCount=0;
+  combo=0;
   timer=Math.max(30,65-stage*5);
   playing=true;
+  stageStartTime=Date.now();
   stageLabel.textContent='Stage '+stage+'/'+maxStage;
-  foundEl.textContent='\u2b50 0/'+totalDiffs;
-  timerEl.textContent='\u23f1 '+timer+'s';
+  foundEl.textContent='⭐ 0/'+totalDiffs;
+  timerEl.textContent='⏱ '+timer+'s';
+  timerEl.style.color='#ff6b6b';
+  scoreLabelEl.textContent='🏆 '+totalScore;
   generateScene();
   clearInterval(timerID);
   timerID=setInterval(()=>{
     timer--;
-    timerEl.textContent='\u23f1 '+timer+'s';
+    timerEl.textContent='⏱ '+timer+'s';
     if(timer<=10)timerEl.style.color='#ff0000';
     else timerEl.style.color='#ff6b6b';
+    // Update score in real-time
+    const currentStageScore=calcStageScore();
+    scoreLabelEl.textContent='🏆 '+(totalScore+currentStageScore);
     if(timer<=0)timeUp();
   },1000);
 }
